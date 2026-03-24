@@ -1,0 +1,93 @@
+#
+# DAG
+#
+# set_up
+#    ↓
+# dim_customers_processing
+# dim_products_processing
+# dim_gross_pricing_processing
+#    ↓
+# fact_orders_processing
+#
+
+resources:
+  jobs:
+    FMCG_Job:
+      name: FMCG_Job
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - colorlog==6.10.1
+              - tabulate==0.9.0
+
+      parameters:
+        - name: catalog_name
+          default: ${var.catalog}
+
+      tasks:
+
+        # Setup
+        - task_key: set_up
+          notebook_task:
+            notebook_path: ${var.notebook_setup}
+            base_parameters:
+              catalog_name: "{{job.parameters.catalog_name}}"
+          environment_key: default
+
+        # Dimension: Customers
+        - task_key: dim_customers_processing
+          depends_on:
+            - task_key: set_up
+          notebook_task:
+            notebook_path: ${var.notebook_customer_processing}
+            base_parameters:
+              catalog_name: "{{job.parameters.catalog_name}}"
+          environment_key: default
+
+        # Dimension: Products
+        - task_key: dim_products_processing
+          depends_on:
+            - task_key: set_up
+          notebook_task:
+            notebook_path: ${var.notebook_products_processing}
+            base_parameters:
+              catalog_name: "{{job.parameters.catalog_name}}"
+          environment_key: default
+
+        # Dimension: Pricing
+        - task_key: dim_gross_pricing_processing
+          depends_on:
+            - task_key: set_up
+          notebook_task:
+            notebook_path: ${var.notebook_pricing_processing}
+            base_parameters:
+              catalog_name: "{{job.parameters.catalog_name}}"
+          environment_key: default
+
+        # Fact Orders
+        - task_key: fact_orders_processing
+          depends_on:
+            - task_key: dim_customers_processing
+            - task_key: dim_products_processing
+            - task_key: dim_gross_pricing_processing
+          notebook_task:
+            notebook_path: ${var.notebook_orders_processing}
+            base_parameters:
+              catalog_name: "{{job.parameters.catalog_name}}"
+          environment_key: default
+
+        # Create View
+        - task_key: create_view_fact_orders_enriched
+          depends_on:
+            - task_key: fact_orders_processing
+          notebook_task:
+            notebook_path: ${var.notebook_create_view_fact_orders_enriched}
+            base_parameters:
+              catalog_name: "{{job.parameters.catalog_name}}"
+          environment_key: default
+
+      queue:
+        enabled: true

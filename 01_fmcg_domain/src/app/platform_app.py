@@ -2,14 +2,13 @@
 import os
 import io
 import logging
-from pathlib import Path
 from datetime import datetime, timezone
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from config.spark_config import SparkConfig
 from pyspark.sql import SparkSession
 from utils.logger import LoggerConfig
-from config.io_config import IOConfig
+from config.io_config import *
 
 class PlatformApp:
     """
@@ -40,7 +39,7 @@ class PlatformApp:
         """
         # Init logger
         if logger is None:
-            self.logger = LoggerConfig().setup_logger(log_dir=IOConfig.LOG_DIR)
+            self.logger = LoggerConfig().setup_logger(log_dir=LOG_DIR)
         self.logger = logger
         self.logger.info("Initializing Data Platform...")
 
@@ -143,120 +142,6 @@ class PlatformApp:
         except Exception:
             self.logger.error("Failed to drop catalog.", exc_info=True)
             raise
-
-    def upload_file_to_bronze(self, path_data: str, path_cp: str, 
-                              name_catalog: str, file_format: str = "csv", header: bool = True) -> None:
-        """
-        Ingest local CSV files into Bronze Delta tables using Structured Streaming.
-
-        This method performs incremental ingestion with streaming guarantees.
-        It first infers schema using batch read, then applies the schema
-        for streaming ingestion to ensure consistency.
-
-        Workflow
-        --------
-        1. Read files in batch mode to infer schema
-        2. Validate input directory is not empty
-        3. Use Structured Streaming for incremental ingestion
-        4. Write data to Bronze Delta tables
-        5. Persist checkpoints for fault tolerance
-
-        Parameters
-        ----------
-        path_data : str
-            Path to source directory containing CSV files.
-
-        path_cp : str
-            Base path for streaming checkpoints (one per entity).
-
-        name_catalog : str,
-            Custom catalog name.
-            If provided, it overrides the default catalog.
-
-        file_format : str, default "csv"
-            Input file format (currently supports only CSV).
-
-        header : bool, default True
-            Whether input CSV files contain headers.
-        """
-        if file_format.lower() != "csv":
-            self.logger.warning(f"Unsupported file format: {file_format}")
-            return
-
-        if name_catalog:
-            self.catalog_name = name_catalog
-
-        for entity in self.DEFAULT_ENTITIES:
-            self.logger.info(f"Starting Bronze ingestion for entity: {entity.title()}")
-            path_data_entity = Path(os.path.join(path_data, entity)).as_posix()
-            path_cp_entity = Path(os.path.join(path_cp, entity)).as_posix()
-            try:
-                # Structured Streaming with CSV does NOT support schema inference.
-                # Therefore, we perform a one-time batch read to infer the schema.
-                # This schema will be reused for the streaming read.
-                self.logger.info(f"Uploading file: {path_data_entity}")
-                bronze_df_batch = (
-                        self.spark.read
-                        .option("header", header)
-                        .option("inferSchema", True)
-                        .csv(path_data_entity)
-                )
-
-                # Skip ingestion if directory is empty
-                if bronze_df_batch.limit(1).count() == 0:
-                    self.logger.warning(f"{entity.title()}: Source directory is empty. Skipping ingestion.")
-                    continue
-
-                # Extract inferred schema from batch DataFrame
-                schema_entity = bronze_df_batch.schema
-                self.logger.info(f"{entity.title()}: Schema inferred successfully")
-
-                # Spark continuously monitors the directory for new files.
-                # When new files arrive, they are processed as micro-batches.
-                # The schema is explicitly provided to ensure consistency.
-                bronze_df_batch = (
-                    self.spark.readStream.format("csv")
-                    .option("header", header)
-                    .schema(schema_entity)
-                    .load(path_data_entity)
-                )
-
-                # Streaming Write to Bronze Delta Table
-                # format("delta"):
-                #   - Delta Lake is the recommended storage format for Bronze layer
-                #
-                # outputMode("append"):
-                #   - Only new records are appended to the table
-                #
-                # checkpointLocation:
-                #   - Stores streaming state and progress
-                #   - Ensures fault tolerance and prevents duplicate ingestion
-                #
-                # trigger(once=True):
-                #   - Executes the streaming query once and then stops
-                #   - Behaves like a batch job with streaming guarantees
-                #   - Ideal for incremental Bronze ingestion
-                #
-                # toTable():
-                #   - Writes directly to a managed Delta table
-                query = (
-                    bronze_df_batch.writeStream
-                    .format("delta")
-                    .outputMode("append")
-                    .option("checkpointLocation", path_cp_entity)
-                    .trigger(once=True)
-                    .toTable(f"{self.catalog_name}.bronze.{entity}")
-                )
-
-                # Wait until the streaming query finishes
-                query.awaitTermination()
-
-                self.logger.info(f"Completed Bronze ingestion for entity: {entity.title()}")
-                self.spark.read.table(f"{IOConfig.BRONZE_COMMON}.{entity}").show(n=10, truncate=False)
-                self.logger.info("-" * 80)
-            except Exception as e:
-                self.logger.exception(f"Bronze ingestion FAILED for entity: {entity.title()} | Error: {str(e)}")
-                raise
 
     @staticmethod
     def parse_remote_time(remote_time_str: str) -> int:

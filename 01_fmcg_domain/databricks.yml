@@ -29,7 +29,7 @@ targets:
     workspace:
       host: https://dbc-ef7d028e-3ab3.cloud.databricks.com
     variables:
-      catalog: workspace
+      catalog: fmcg_domain
       schema: ${workspace.current_user.short_name}
   prod:
     mode: production
@@ -38,7 +38,7 @@ targets:
       # We explicitly deploy to /Workspace/Users/25001437@student.datapot.edu.vn to make sure we only have a single copy.
       root_path: /Workspace/Users/25001437@student.datapot.edu.vn/PROD/.bundle/${bundle.name}/${bundle.target}
     variables:
-      catalog: workspace
+      catalog: fmcg_domain_prod
       schema: prod
     permissions:
       - group_name: admins

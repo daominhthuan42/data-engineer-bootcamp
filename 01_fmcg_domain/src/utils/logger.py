@@ -35,6 +35,11 @@ class LoggerConfig:
         """
 
         logger = logging.getLogger(name)
+
+        # If logger already configured → reuse
+        if logger.handlers:
+            return logger
+
         logger.setLevel(level)
 
         # Disable log propagation to prevent duplicate logs
@@ -70,9 +75,9 @@ class LoggerConfig:
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
             # Generate log file name by date
-            today = datetime.now().strftime("%Y%m%d%H%M%S")
+            # today = datetime.now().strftime("%Y%m%d%H%M%S")
 
-            log_file = os.path.join(log_dir, f"{name}_{today}.log")
+            log_file = os.path.join(log_dir, f"{name}.log")
             file_formatter = logging.Formatter(
                 "%(asctime)s | %(levelname)-8s | %(message)s",
                 datefmt="%Y-%m-%d %H:%M:%S",

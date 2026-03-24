@@ -1,149 +1,197 @@
 # utils.py
 import logging
 from typing import List
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.window import Window
 from pyspark.sql.functions import *
 from delta.tables import DeltaTable
-import traceback
 
-class transformation:
+def dedup(df: DataFrame, dedup_cols: List, cdc: str, logger: logging.Logger) -> DataFrame:
+    """
+    Remove duplicate records and retain the latest record for each key group.
 
-    @staticmethod
-    def dedup(df: DataFrame, dedup_cols: List, cdc: str) -> DataFrame:
-        """
-        Remove duplicate records and keep only the latest record per key.
+    This function performs the following steps:
+    - Generate a deduplication key by concatenating the specified columns
+    - Partition the dataset by the generated deduplication key
+    - Apply a window function to rank records using the CDC column in descending order
+    - Retain only the most recent record (row_number = 1) within each partition
+    - Remove temporary helper columns used during the deduplication process
 
-        This function generates a deduplication key by concatenating
-        the specified columns, then uses a window function to rank
-        records within each key group based on the CDC column.
-        Only the first (latest) record is retained.
+    Parameters
+    ----------
+    df : DataFrame
+        Input Spark DataFrame containing raw records.
 
-        Args:
-            df (DataFrame): Input Spark DataFrame.
-            dedup_cols (List): List of column names used to identify duplicates.
-            cdc (str): Column name used for ordering records
-                    (e.g. last_updated_timestamp).
+    dedup_cols : List
+        List of column names used to construct the deduplication key.
 
-        Returns:
-            DataFrame: Deduplicated DataFrame containing only the latest records.
-        """
+    cdc : str
+        Column used for ordering records to determine the most recent entry
+        (e.g., last_updated_timestamp or ingestion_timestamp).
 
-        df = df.withColumn("dedupKey", concat(*dedup_cols))
-        df = df.withColumn("dedupCounts", row_number() \
-                                .over(Window.partitionBy("dedupKey") \
-                                .orderBy(col(cdc).desc()))
-                          )
-        df = df.filter(df.dedupCounts == 1)
-        df = df.drop("dedupKey", "dedupCounts")
+    logger : logging.Logger
+        Application logger used to record execution information.
 
-        return df
+    Returns
+    -------
+    DataFrame
+        Deduplicated Spark DataFrame containing only the latest record per key.
+    """
 
-    @staticmethod
-    def process_timestamp(df: DataFrame) -> None:
-        """
-        Add processing timestamp to track when the record is transformed.
+    logger.info("Starting deduplication")
+    logger.info("Dedup columns: %s | CDC column: %s", dedup_cols, cdc)
 
-        This column is used for auditing, debugging, and data lineage
-        to identify when the data was processed in the pipeline.
-        """
+    input_count = df.count()
+    logger.info("Input row count: %s", input_count)
 
-        return (df.withColumn("process_timestamp", current_timestamp()))
+    # Create a temporary deduplication key by concatenating the dedup columns
+    df = df.withColumn("dedupKey", concat(*dedup_cols))
 
-    @staticmethod
-    def upsert(df: DataFrame, key_cols: List, table: str, cdc: str, name_catalog: str, 
-               name_schema: str, logger: logging) -> None:
-        """
-        Perform a CDC-based UPSERT (MERGE) operation into a Delta Lake table.
+    # Assign row numbers within each dedupKey partition
+    # Ordering is based on CDC column (latest record first)
+    df = df.withColumn("dedupCounts", row_number() \
+                            .over(Window.partitionBy("dedupKey") \
+                            .orderBy(col(cdc).desc()))
+                        )
 
-        This function merges records from a source Spark DataFrame into a
-        target Delta table using the specified key columns. Existing records
-        are updated only when the source CDC column value is newer than or
-        equal to the target. New records are inserted when no match is found.
+    # Keep only the latest record per dedupKey (row_number = 1)
+    df = df.filter(df.dedupCounts == 1)
 
-        The merge logic follows these rules:
+    # Count output rows after deduplication
+    output_count = df.count()
+    logger.info("Output row count after dedup: %s", output_count)
 
-        - MATCHED rows:
-          Update all columns if src.<cdc> >= trg.<cdc>
+    # Log number of removed duplicate records
+    logger.info("Removed duplicate rows: %s", input_count - output_count)
 
-        - NOT MATCHED rows:
-          Insert all columns
+    # Drop temporary helper columns used for deduplication
+    df = df.drop("dedupKey", "dedupCounts")
 
-        All operations are logged using the provided logger. Any exception
-        occurring during execution is logged with full stack trace and
-        re-raised to the caller.
+    logger.info("Deduplication completed")
 
-        Parameters
-        ----------
-        df : pyspark.sql.DataFrame
-            Source DataFrame containing new or updated records.
+    return df
 
-        key_cols : List[str]
-            List of column names used as merge keys. These columns must
-            uniquely identify records in the target table.
+def process_timestamp(df: DataFrame) -> None:
+    """
+    Add processing timestamp to track when the record is transformed.
 
-        table : str
-            Target Delta table name (without catalog and schema).
+    This column is used for auditing, debugging, and data lineage
+    to identify when the data was processed in the pipeline.
+    """
 
-        cdc : str
-            Name of the CDC (Change Data Capture) column used to determine
-            record freshness (e.g., updated_at, last_modified_ts).
+    return (df.withColumn("process_timestamp", current_timestamp()))
 
-        name_catalog : str
-            Catalog name containing the target Delta table.
+def upsert(spark: SparkSession, df: DataFrame, key_cols: List, table: str, cdc: str, name_catalog: str, 
+           name_schema: str, logger: logging) -> None:
+    """
+    Perform a CDC-based UPSERT (MERGE) operation into a Delta Lake table.
 
-        name_schema : str
-            Schema (database) name containing the target Delta table.
+    This function merges records from a source Spark DataFrame into a
+    target Delta table using the specified key columns. Existing records
+    are updated only when the source CDC column value is newer than or
+    equal to the target. New records are inserted when no match is found.
 
-        logger : logging.Logger
-            Configured logger instance used for logging execution status
-            and error details.
+    The merge logic follows these rules:
 
-        Returns
-        -------
-        None
-            This function does not return a value. It raises an exception
-            if the merge operation fails.
+    - MATCHED rows:
+        Update all columns if src.<cdc> >= trg.<cdc>
 
-        Raises
-        ------
-        Exception
-            Propagates any exception raised during Delta merge execution
-            after logging the error details.
+    - NOT MATCHED rows:
+        Insert all columns
 
-        Examples
-        --------
-        >>> upsert(
-        ...     df=source_df,
-        ...     key_cols=["id", "email"],
-        ...     table="customer",
-        ...     cdc="updated_at",
-        ...     name_catalog="main",
-        ...     name_schema="silver",
-        ...     logger=logger
-        ... )
-        """
+    All operations are logged using the provided logger. Any exception
+    occurring during execution is logged with full stack trace and
+    re-raised to the caller.
 
-        try:
-            # Build merge condition using key columns
-            # Example: src.id = trg.id AND src.email = trg.email
-            merge_condition = " AND ".join(
-                [f"src.{i} = trg.{i}" for i in key_cols]
-            )
-            target_table = f"{name_catalog}.{name_schema}.{table}"
-            logger.info(f"Starting MERGE into {target_table}")
+    Parameters
+    ----------
+    spark : pyspark.sql.SparkSession
+        Active Spark session used to access catalog metadata and execute
+        the Delta Lake merge operation.
 
-            # Load target Delta table
-            dlt_obj = DeltaTable.forName(df.sparkSession, target_table)
+    df : pyspark.sql.DataFrame
+        Source DataFrame containing new or updated records.
 
-            # Merge source DataFrame into target table
-            # - Update all columns when matched
-            # - Insert all columns when not matched
-            dlt_obj.alias("trg").merge(df.alias("src"), merge_condition) \
-                                .whenMatchedUpdateAll(condition = f"src.{cdc} >= trg.{cdc}") \
-                                .whenNotMatchedInsertAll() \
-                                .execute()
-            logger.info(f"MERGE completed successfully: {target_table}")
-        except Exception as e:
-            logger.exception(f"MERGE FAILED on {table}: {str(e)}")
-            raise
+    key_cols : List[str]
+        List of column names used as merge keys. These columns must
+        uniquely identify records in the target table.
+
+    table : str
+        Target Delta table name (without catalog and schema).
+
+    cdc : str
+        Name of the CDC (Change Data Capture) column used to determine
+        record freshness (e.g., updated_at, last_modified_ts).
+
+    name_catalog : str
+        Catalog name containing the target Delta table.
+
+    name_schema : str
+        Schema (database) name containing the target Delta table.
+
+    logger : logging.Logger
+        Configured logger instance used for logging execution status
+        and error details.
+
+    Returns
+    -------
+    None
+        This function does not return a value. It raises an exception
+        if the merge operation fails.
+
+    Raises
+    ------
+    Exception
+        Propagates any exception raised during Delta merge execution
+        after logging the error details.
+
+    Examples
+    --------
+    >>> upsert(
+    ...     spark=spark,
+    ...     df=source_df,
+    ...     key_cols=["id", "email"],
+    ...     table="customer",
+    ...     cdc="updated_at",
+    ...     name_catalog="main",
+    ...     name_schema="silver",
+    ...     logger=logger
+    ... )
+    """
+
+    target_table = f"{name_catalog}.{name_schema}.{table}"
+    try:
+        logger.info(f"Starting UPSERT into {target_table}")
+
+        # Validate Delta format
+        detail = spark.sql(f"DESCRIBE DETAIL {target_table}").collect()[0]
+        if detail.format != "delta":
+            raise ValueError(f"{target_table} exists but is not a Delta table")
+
+        # Validate columns
+        source_cols = set(df.columns)
+        missing_keys = [c for c in key_cols if c not in source_cols]
+        if missing_keys:
+            raise ValueError(f"Missing key columns in source DataFrame: {missing_keys}")
+
+        if cdc not in source_cols:
+            raise ValueError(f"CDC column '{cdc}' not found in source DataFrame")
+
+        # Build merge condition using key columns
+        # Example: src.id = trg.id AND src.email = trg.email
+        merge_condition = " AND ".join([f"src.{i} = trg.{i}" for i in key_cols])
+
+        # Load target Delta table
+        dlt_obj = DeltaTable.forName(df.sparkSession, target_table)
+
+        # Merge source DataFrame into target table
+        # - Update all columns when matched
+        # - Insert all columns when not matched
+        dlt_obj.alias("trg").merge(df.alias("src"), merge_condition) \
+                            .whenMatchedUpdateAll(condition = f"src.{cdc} >= trg.{cdc}") \
+                            .whenNotMatchedInsertAll() \
+                            .execute()
+        logger.info(f"UPSERT completed successfully: {target_table}")
+    except Exception as e:
+        logger.exception(f"UPSERT FAILED on {table}: {str(e)}")
+        raise
