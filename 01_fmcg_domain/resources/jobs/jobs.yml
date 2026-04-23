@@ -15,6 +15,13 @@ resources:
     FMCG_Job:
       name: FMCG_Job
 
+      max_concurrent_runs: 1
+
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: "Asia/Ho_Chi_Minh"
+        pause_status: "UNPAUSED"
+
       environments:
         - environment_key: default
           spec:
