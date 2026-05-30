@@ -4,7 +4,7 @@ from simulator.journey import simulate_journey
 
 def main():
     producer = create_producer(logger=logger)
-    simulate_journey(producer, "Vehicle-ThuanDao-123")
+    simulate_journey(producer=producer, device_id="Vehicle-ThuanDao-123", logger=logger)
 
 if __name__ == "__main__":
     try:

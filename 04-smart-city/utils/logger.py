@@ -1,6 +1,7 @@
 # logger.py
 import os
 import sys
+from typing import Optional
 import logging
 from logging.handlers import RotatingFileHandler
 from colorlog import ColoredFormatter
@@ -20,7 +21,7 @@ class LoggerConfig:
 
     @staticmethod
     def setup_logger(name: str = "spark", level: int = logging.DEBUG, 
-                     log_dir: str | None = None) -> logging.Logger:
+                     log_dir: Optional[str] = None) -> logging.Logger:
         """
         Create and configure logger with console and file handlers.
 

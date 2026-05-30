@@ -5,6 +5,7 @@ from config.settings import *
 
 start_time = datetime.now()
 start_location = LONDON_COORDINATES.copy()
+random.seed(42)
 
 LATITUDE_INCREMENT = (
     BIRMINGHAM_COORDINATES["latitude"] -
