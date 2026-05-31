@@ -12,6 +12,6 @@ WEATHER_TOPIC = os.getenv("WEATHER_TOPIC", "weather_data")
 EMERGENCY_TOPIC = os.getenv("EMERGENCY_TOPIC", "emergency_data")
 
 CONFIGURATION = {
-    "AWS_ACCESS_KEY": "AKIA4R55CNV7EE3LIMEX",
-    "AWS_SECRET_KEY": "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",
+    "AWS_ACCESS_KEY": os.getenv("AWS_ACCESS_KEY"),
+    "AWS_SECRET_KEY": os.getenv("AWS_SECRET_KEY")
 }
