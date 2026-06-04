@@ -1,0 +1,104 @@
+# This file extends the Astro docker-compose setup with additional services
+# It will be automatically loaded by docker-compose when running astro dev start
+
+services:
+  # MinIO for S3-compatible storage
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: thuandao
+      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_BROWSER_REDIRECT_URL: https://console.minio.thuandao.me
+      MINIO_SERVER_URL: https://minio.thuandao.me
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - airflow
+      - default
+    restart: unless-stopped
+
+  # Create MLflow bucket in MinIO
+  minio-mc:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+          condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      mc alias set myminio http://minio:9000 thuandao minioadmin;
+      mc mb myminio/mlflow-artifacts || true;
+      mc anonymous set public myminio/mlflow-artifacts;
+      exit 0;
+      "
+
+  mlflow:
+    image: python:3.11.9-slim
+    command: >
+      bash -c "pip install mlflow==2.9.2 psycopg2-binary boto3 && 
+               export MLFLOW_S3_ENDPOINT_URL=http://minio:9000 &&
+               mlflow server --host 0.0.0.0 --port 5001 
+               --backend-store-uri postgresql://mlflow:mlflow@mlflow-db:5432/mlflow 
+               --default-artifact-root s3://mlflow-artifacts/ 
+               --serve-artifacts"
+    ports:
+      - '5001:5001'
+    environment:
+      - AWS_ACCESS_KEY_ID=thuandao
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9000
+      - AWS_DEFAULT_REGION=us-east-1
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-mc:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5001')\""]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - airflow
+      - default
+    restart: unless-stopped
+
+  # PostgreSQL for MLflow
+  mlflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'mlflow']
+      interval: 5s
+      retries: 5
+    networks:
+      - airflow
+      - default
+    restart: unless-stopped
+
+volumes:
+  minio-data:
+  mlflow-db-volume:
+
+networks:
+  airflow:
+    external: true
+    name: 05-astro-salesforecast-main_ff0d54_airflow
+  default:
+    name: 05-astro-salesforecast-main_ff0d54_default
