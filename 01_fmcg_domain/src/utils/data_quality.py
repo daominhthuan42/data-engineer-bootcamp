@@ -67,9 +67,7 @@ def check_null(df: DataFrame, logger: logging.Logger) -> DataFrame:
     except ImportError:
         logger.warning(pdf.to_string(index=False))
 
-    logger.warning(
-        f"Total missing values: {total_missing:,} out of {total_rows:,} rows."
-    )
+    logger.warning(f"Total missing values: {total_missing:,} out of {total_rows:,} rows.")
 
 def check_duplicate(df: DataFrame, logger: logging.Logger) -> None:
     """
@@ -166,9 +164,7 @@ def checking_outlier(df: DataFrame, dataset_name: str, list_feature: list[str],
     if not outlier_info:
         logger.info(f"[{dataset_name}] No outliers detected across all features.")
     else:
-        logger.info(
-            f"[{dataset_name}] Outliers detected in {len(outlier_info)} features."
-        )
+        logger.info(f"[{dataset_name}] Outliers detected in {len(outlier_info)} features.")
 
     logger.info("-" * 80)
     logger.info("\s" + outlier_info)

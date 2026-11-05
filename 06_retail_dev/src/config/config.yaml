@@ -1,0 +1,55 @@
+# =========================================================
+# Global configuration for the Machine Learning project
+
+# This file stores all high-level configuration used across
+# the project such as reproducibility, data source settings,
+# dataset information, and default experiment parameters.
+#
+# The configuration is intended to be loaded by the
+# config_loader module and used across training, tuning,
+# and inference pipelines.
+# =========================================================
+
+# Reproducibility
+random_state: 42
+
+# Dataset Configuration
+datasets:
+  # Raw datasets
+  raw:
+    customers: "datasets/raw/customers.csv"
+    geography: "datasets/raw/geography.csv"
+    inventory: "datasets/raw/inventory.csv"
+    order_items: "datasets/raw/order_items.csv"
+    orders: "datasets/raw/orders.csv"
+    payments: "datasets/raw/payments.csv"
+    products: "datasets/raw/products.csv"
+    promotions: "datasets/raw/promotions.csv"
+    returns: "datasets/raw/returns.csv"
+    reviews: "datasets/raw/reviews.csv"
+    sales: "datasets/raw/sales.csv"
+    shipments: "datasets/raw/shipments.csv"
+    web_traffic: "datasets/raw/web_traffic.csv"
+
+  # Processed datasets
+  processed:
+
+  # Dataset display name
+  name: "Retail Dataset"
+
+  # Supported file encodings when loading CSV files
+  default_encoding:
+    - "utf-8"
+    - "latin1"
+    - "cp1252"
+    - "ISO-8859-1"
+
+# Train / Test Split Configuration
+split:
+  method: "stratified_shuffle"
+  n_splits: 1
+  test_size: 0.2
+
+# Cross-Validation Configuration
+cv:
+  n_splits: 5
