@@ -53,3 +53,6 @@ split:
 # Cross-Validation Configuration
 cv:
   n_splits: 5
+
+catalog: "00_retail_dev"
+de
